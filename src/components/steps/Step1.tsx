@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { api } from '@/lib/api';
 import {
   validateCurrency,
   validateDob,
@@ -147,8 +148,8 @@ export function Step1({
   );
   const [banner, setBanner] = useState<string | null>(null);
   const [emailSuggestion, setEmailSuggestion] = useState<string | null>(null);
-  const [terms] = useState<number[]>(options.loanTerms.map((t) => t.value));
-  const [amountCap] = useState<{ min: number; max: number; note: string | null }>({
+  const [terms, setTerms] = useState<number[]>(options.loanTerms.map((t) => t.value));
+  const [amountCap, setAmountCap] = useState<{ min: number; max: number; note: string | null }>({
     min: options.loanAmount.min,
     max: options.loanAmount.max,
     note: null,
@@ -192,21 +193,96 @@ export function Step1({
   const totalMonthlyIncome =
     (form.netMonthlyIncome ?? 0) + (form.additionalMonthlyIncome ?? 0);
 
+  // ---------------- term + amount rules, re-queried whenever the inputs change
+  useEffect(() => {
+    if (!form.state) return;
+    const controller = new AbortController();
+    const query = new URLSearchParams({
+      amount: String(form.loanAmount),
+      state: form.state,
+      ...(totalMonthlyIncome > 0 ? { income: String(totalMonthlyIncome) } : {}),
+    });
+
+    api
+      .get<{
+        licensed: boolean;
+        minAmount: number;
+        maxAmount: number;
+        terms: number[];
+      }>(`/lookup/product-rules?${query}`)
+      .then((rules) => {
+        setTerms(rules.terms);
+        setAmountCap({
+          min: rules.minAmount,
+          max: rules.maxAmount,
+          note: !rules.licensed
+            ? 'We are not currently licensed to lend in the state you selected.'
+            : rules.maxAmount < options.loanAmount.max
+              ? `State rules cap loans at $${rules.maxAmount.toLocaleString()} where you live.`
+              : null,
+        });
+        if (form.loanTermMonths && !rules.terms.includes(Number(form.loanTermMonths))) {
+          set('loanTermMonths', '');
+        }
+        if (form.loanAmount > rules.maxAmount) set('loanAmount', rules.maxAmount);
+        if (form.loanAmount < rules.minAmount) set('loanAmount', rules.minAmount);
+      })
+      .catch(() => undefined);
+
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.state, form.loanAmount, totalMonthlyIncome]);
+
   const termOptions = useMemo(
     () => terms.map((t) => ({ value: t, label: `${t} months` })),
     [terms],
   );
 
-  // ---------------- blur checks (local only - the form is not connected to the API)
+  // ---------------- async blur checks (email MX + disposable, ZIP/state)
   const checkEmailOnBlur = async () => {
     const local = validateEmail(form.email);
     setError('email', local);
     setEmailSuggestion(suggestEmail(form.email));
+    if (local) return;
+    try {
+      const res = await api.get<{ valid: boolean; reason?: string; suggestion?: string | null }>(
+        `/lookup/email?value=${encodeURIComponent(form.email)}`,
+      );
+      if (!res.valid) {
+        setError(
+          'email',
+          res.reason === 'disposable'
+            ? 'Temporary or disposable email addresses are not accepted.'
+            : res.reason === 'no_mx'
+              ? 'That email domain cannot receive mail. Please check the spelling.'
+              : 'Enter a valid email address.',
+        );
+      }
+      if (res.suggestion) setEmailSuggestion(res.suggestion);
+    } catch {
+      /* a lookup outage must not block the applicant */
+    }
   };
 
   const checkZipOnBlur = async () => {
     const local = validateZip(form.zipCode);
     setError('zipCode', local);
+    if (local || !form.state) return;
+    try {
+      const res = await api.get<{ valid: boolean; suggestedState: string | null }>(
+        `/lookup/zip?zip=${form.zipCode}&state=${form.state}`,
+      );
+      if (!res.valid) {
+        setError(
+          'zipCode',
+          res.suggestedState
+            ? `That ZIP code is in ${res.suggestedState}, not ${form.state}.`
+            : 'That ZIP code does not match the state you selected.',
+        );
+      }
+    } catch {
+      /* ignore */
+    }
   };
 
   // ---------------- submit

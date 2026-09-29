@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { api } from '@/lib/api';
 import { digitsOnly, formatCurrency } from '@/lib/format';
 import { validateAccountNumber, validateRoutingNumber, required } from '@/lib/validation';
 import type {
@@ -70,6 +71,7 @@ export function Step3({
 }: Props) {
   const [routing, setRouting] = useState(initial?.routingNumber ?? '');
   const [bankName, setBankName] = useState(initial?.bankName ?? '');
+  const [lookingUp, setLookingUp] = useState(false);
   const [account, setAccount] = useState(initial?.accountNumber ?? '');
   const [confirmAccount, setConfirmAccount] = useState(initial?.confirmAccountNumber ?? '');
   const [accountType, setAccountType] = useState<'' | 'checking' | 'savings'>(
@@ -114,10 +116,32 @@ export function Step3({
   const setError = (key: string, message: string | null) =>
     setErrors((e) => ({ ...e, [key]: message ?? '' }));
 
-  /** Routing number is checked locally only - no FedACH lookup. */
+  /** Field 44 - populated from the FedACH lookup, never typed. */
   const lookupRouting = async () => {
     const local = validateRoutingNumber(routing);
     setError('routingNumber', local);
+    setBankName('');
+    if (local) return;
+
+    setLookingUp(true);
+    try {
+      const res = await api.get<{ valid: boolean; bankName: string | null; inFedachFile?: boolean }>(
+        `/lookup/routing?value=${digitsOnly(routing)}`,
+      );
+      if (!res.valid) {
+        setError('routingNumber', 'That routing number is not valid. Please check the 9 digits.');
+      } else if (res.bankName) {
+        setBankName(res.bankName);
+      } else {
+        // Not in the participant file - a soft signal, so we let it through
+        // and flag it for verification rather than blocking.
+        setBankName('Bank not recognised - we will verify this manually');
+      }
+    } catch {
+      /* a lookup outage must not block funding */
+    } finally {
+      setLookingUp(false);
+    }
   };
 
   const validateAll = (): FieldErrors => {
@@ -229,9 +253,10 @@ export function Step3({
           id="bankName"
           label="Bank name"
           required
-          value={bankName}
-          onChange={(v) => setBankName(v.slice(0, 100))}
-          autoComplete="off"
+          value={lookingUp ? 'Looking up...' : bankName}
+          onChange={() => undefined}
+          readOnly
+          hint="Filled in automatically from your routing number."
         />
 
         <TextField

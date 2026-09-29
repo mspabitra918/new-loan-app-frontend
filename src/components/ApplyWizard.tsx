@@ -1,11 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { initTracking } from "@/lib/tracking";
-import {
-  APPLY_CONSENT_TEMPLATES,
-  APPLY_FORM_OPTIONS,
-} from "@/lib/apply-form-data";
+import { api, ApiRequestError, API_BASE } from "@/lib/api";
+import { getTracking, initTracking } from "@/lib/tracking";
 import { formatCurrency } from "@/lib/format";
 import type {
   ConsentTemplate,
@@ -27,6 +24,41 @@ type Outcome =
   | { kind: "submitted"; result: SubmitResponse }
   | { kind: "duplicate"; message: string; applicationId?: string };
 
+/**
+ * Which screen a field lives on.
+ *
+ * The server tags errors it raises itself with their screen, but the request
+ * body is validated as one object before any of that runs - a shape error
+ * arrives untagged. This puts those on the right screen too, so the applicant
+ * is never shown a message about a field that is not in front of them.
+ */
+const SCREEN_FOR_FIELD: Record<string, 2 | 3> = {
+  ssn: 2,
+  confirmSsn: 2,
+  driversLicenseNumber: 2,
+  dlIssuingState: 2,
+  dlExpirationDate: 2,
+  routingNumber: 3,
+  bankName: 3,
+  accountNumber: 3,
+  confirmAccountNumber: 3,
+  accountType: 3,
+  accountStatusSelfReported: 3,
+  accountAge: 3,
+};
+
+/** The earliest screen any of these errors belongs to. */
+function screenFor(errors: FieldErrors): 1 | 2 | 3 {
+  let earliest: 1 | 2 | 3 = 3;
+  let found = false;
+  for (const field of Object.keys(errors)) {
+    const screen = SCREEN_FOR_FIELD[field] ?? 1;
+    found = true;
+    if (screen < earliest) earliest = screen;
+  }
+  return found ? earliest : 1;
+}
+
 /** What each screen has contributed to the one request body. */
 interface Parts {
   1?: SubmitRequestPart;
@@ -46,10 +78,8 @@ interface Snapshots {
  *
  * Next and Back move between the screens and nothing is posted on the way -
  * the answers live here, in this component, until the applicant presses
- * submit on the last screen.
- *
- * The form is not connected to the API: the options and consent wording are
- * local copies (lib/apply-form-data.ts) and submitting sends nothing anywhere.
+ * submit on the last screen. Then the whole application goes to
+ * POST /applications/submit in a single request and is stored in one write.
  *
  * Nothing is written to browser storage either, so a reload starts a clean
  * form. That is the deliberate trade: no half-finished application anywhere,
@@ -60,8 +90,9 @@ interface Snapshots {
  * the screen the error belongs to with the message on the right field.
  */
 export function ApplyWizard() {
-  const options = APPLY_FORM_OPTIONS;
-  const templates = APPLY_CONSENT_TEMPLATES;
+  const [options, setOptions] = useState<LookupOptions | null>(null);
+  const [templates, setTemplates] = useState<ConsentTemplate[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
@@ -102,9 +133,44 @@ export function ApplyWizard() {
     [],
   );
 
+  const loadForm = useCallback(() => {
+    setLoadError(null);
+    Promise.all([
+      api.get<LookupOptions>("/lookup/options"),
+      api.get<ConsentTemplate[]>("/consents/templates"),
+    ])
+      .then(([o, t]) => {
+        setOptions(o);
+        setTemplates(t);
+      })
+      .catch((err) => {
+        // A dead end here is the worst possible failure - the applicant sees
+        // nothing and we learn nothing. Say what broke and offer a retry.
+        const reachable =
+          !(err instanceof ApiRequestError) || err.payload.statusCode !== 0;
+        setLoadError(
+          reachable
+            ? "We could not load the application form. Please try again in a moment."
+            : "We could not reach our servers. Check your connection and try again.",
+        );
+        if (process.env.NODE_ENV !== "production") {
+          // eslint-disable-next-line no-console
+          console.error(
+            `[apply] Failed to load form data from ${API_BASE}. ` +
+              "Is the API running, and does NEXT_PUBLIC_API_URL point at it?",
+            err,
+          );
+        }
+      });
+  }, []);
+
   useEffect(() => {
     initTracking();
-  }, []);
+    api
+      .post("/applications/session", { tracking: getTracking() })
+      .catch(() => undefined);
+    loadForm();
+  }, [loadForm]);
 
   const templatesForStep = useCallback(
     (n: 1 | 2 | 3) => templates.filter((t) => t.step === n),
@@ -151,34 +217,73 @@ export function ApplyWizard() {
 
   // ---------------- the one submit
 
-  /** Everything the applicant entered - kept in the browser, never posted. */
+  /**
+   * Everything the applicant entered, in one request.
+   *
+   * The consents from all three screens go up in a single array; the server
+   * splits them back out by the screen each checkbox was shown on, so the
+   * evidence rows are unchanged.
+   */
   const onSubmitAll = useCallback(
     async (step3Part: SubmitRequestPart) => {
       parts.current[3] = step3Part;
       setServerErrors(null);
+      setSubmitting(true);
 
-      const answers = {
+      const body = {
         ...parts.current[1],
         ...parts.current[2],
         ...step3Part,
+        consents: [
+          ...(parts.current[1]?.consents ?? []),
+          ...(parts.current[2]?.consents ?? []),
+          ...(step3Part.consents ?? []),
+        ],
+        tracking: getTracking(),
       } as SubmitRequest;
 
-      // Not sent to the API - the applicant just sees the confirmation.
-      const account = String(answers.accountNumber ?? "");
-      setOutcome({
-        kind: "submitted",
-        result: {
-          applicationId: `APP-${Date.now().toString(36).toUpperCase()}`,
-          status: "submitted",
-          statusLabel: "Application Received",
-          loanAmount: answers.loanAmount,
-          loanTermMonths: answers.loanTermMonths,
-          bankName: answers.bankName ?? null,
-          accountNumberMasked: account.slice(-4),
-        },
-      });
+      try {
+        const result = await api.post<SubmitResponse>(
+          "/applications/submit",
+          body,
+        );
+        setOutcome({ kind: "submitted", result });
+      } catch (err) {
+        if (err instanceof ApiRequestError) {
+          if (err.payload.code === "DUPLICATE_APPLICATION") {
+            setOutcome({
+              kind: "duplicate",
+              message: err.payload.message,
+              applicationId: err.payload.applicationId,
+            });
+            return;
+          }
+          // The server tags field errors with the screen they belong to.
+          // An untagged one came from the request-body check that runs before
+          // any of that, so fall back to where the fields themselves live.
+          const target = (err.payload.step ?? screenFor(err.fieldErrors)) as
+            | 1
+            | 2
+            | 3;
+          setServerErrors({
+            step: target,
+            message: err.payload.message,
+            errors: err.fieldErrors,
+          });
+          if (target !== step) setStep(target);
+        } else {
+          setServerErrors({
+            step,
+            message: "Something went wrong. Please try again.",
+            errors: {},
+          });
+        }
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      } finally {
+        setSubmitting(false);
+      }
     },
-    [],
+    [step],
   );
 
   const errorsFor = (n: 1 | 2 | 3) =>
@@ -187,6 +292,53 @@ export function ApplyWizard() {
     serverErrors?.step === n ? serverErrors.message : null;
 
   // ---------------- render
+
+  if (loadError) {
+    return (
+      <div
+        role="alert"
+        className="rounded-xl border border-red-300 bg-red-50 p-6"
+      >
+        <h1 className="text-lg font-semibold text-red-900">
+          We could not start your application
+        </h1>
+        <p className="mt-2 text-sm leading-relaxed text-red-800">{loadError}</p>
+        <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+          <button
+            type="button"
+            onClick={loadForm}
+            className="rounded-lg bg-red-700 px-6 py-3 text-sm font-semibold text-white transition hover:bg-red-800"
+          >
+            Try again
+          </button>
+          <a
+            href={`tel:${(process.env.NEXT_PUBLIC_SUPPORT_PHONE || "(800) 555-0143").replace(/\D/g, "")}`}
+            className="rounded-lg border border-red-300 bg-white px-6 py-3 text-center text-sm font-semibold text-red-800 transition hover:bg-red-50"
+          >
+            Apply by phone:{" "}
+            {process.env.NEXT_PUBLIC_SUPPORT_PHONE || "(800) 555-0143"}
+          </a>
+        </div>
+        {process.env.NODE_ENV !== "production" && (
+          <p className="mt-5 rounded-md bg-red-100 p-3 font-mono text-xs text-red-900">
+            dev hint: the form loads from {API_BASE}/api - start the API (npm
+            run start:dev in loan-backend) or set NEXT_PUBLIC_API_URL in
+            loan-frontend/.env.local
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  if (!options) {
+    return (
+      <div className="space-y-4" aria-busy="true">
+        <div className="h-8 w-40 animate-pulse rounded bg-slate-200" />
+        <div className="h-48 animate-pulse rounded-xl bg-slate-200" />
+        <div className="h-64 animate-pulse rounded-xl bg-slate-200" />
+      </div>
+    );
+  }
 
   if (outcome.kind === "duplicate") {
     return (
