@@ -14,9 +14,9 @@ export const config = {
     // "/faq/:path*",
     // "/how-it-works/:path*",
     // "/loan/:path*",
-    "/status/:path*",
+    // "/status/:path*",
     // "/rates-and-fees",
-    "/loan-status",
+    // "/loan-status",
     // "/legal/:path*",
   ],
 };

@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiRequestError, API_BASE } from "@/lib/api";
-import { getTracking, initTracking } from "@/lib/tracking";
+import { api, ApiRequestError } from "@/lib/api";
+import { getTracking } from "@/lib/tracking";
 import { formatCurrency } from "@/lib/format";
+import { DEFAULT_OPTIONS } from "@/lib/default-options";
+import { DEFAULT_CONSENT_TEMPLATES } from "@/lib/consent-templates";
 import type {
   ConsentTemplate,
   FieldErrors,
@@ -22,16 +24,13 @@ import { Step3, type Step3Snapshot } from "./steps/Step3";
 type Outcome =
   | { kind: "none" }
   | { kind: "submitted"; result: SubmitResponse }
-  | { kind: "duplicate"; message: string; applicationId?: string };
+  | {
+      kind: "duplicate";
+      message: string;
+      applicationId?: string;
+      email?: string;
+    };
 
-/**
- * Which screen a field lives on.
- *
- * The server tags errors it raises itself with their screen, but the request
- * body is validated as one object before any of that runs - a shape error
- * arrives untagged. This puts those on the right screen too, so the applicant
- * is never shown a message about a field that is not in front of them.
- */
 const SCREEN_FOR_FIELD: Record<string, 2 | 3> = {
   ssn: 2,
   confirmSsn: 2,
@@ -47,7 +46,6 @@ const SCREEN_FOR_FIELD: Record<string, 2 | 3> = {
   accountAge: 3,
 };
 
-/** The earliest screen any of these errors belongs to. */
 function screenFor(errors: FieldErrors): 1 | 2 | 3 {
   let earliest: 1 | 2 | 3 = 3;
   let found = false;
@@ -59,69 +57,37 @@ function screenFor(errors: FieldErrors): 1 | 2 | 3 {
   return found ? earliest : 1;
 }
 
-/** What each screen has contributed to the one request body. */
 interface Parts {
   1?: SubmitRequestPart;
   2?: SubmitRequestPart;
   3?: SubmitRequestPart;
 }
 
-/** What each screen last looked like, so Back puts it back untouched. */
 interface Snapshots {
   1?: Step1Snapshot;
   2?: Step2Snapshot;
   3?: Step3Snapshot;
 }
 
-/**
- * The application form: three screens, one submission.
- *
- * Next and Back move between the screens and nothing is posted on the way -
- * the answers live here, in this component, until the applicant presses
- * submit on the last screen. Then the whole application goes to
- * POST /applications/submit in a single request and is stored in one write.
- *
- * Nothing is written to browser storage either, so a reload starts a clean
- * form. That is the deliberate trade: no half-finished application anywhere,
- * on the server or in the browser, and nothing to resume.
- *
- * The wizard rather than a screen owns the request, because a field error can
- * come back against any of the three and the form has to be able to reopen
- * the screen the error belongs to with the message on the right field.
- */
 export function ApplyWizard() {
-  const [options, setOptions] = useState<LookupOptions | null>(null);
-  const [templates, setTemplates] = useState<ConsentTemplate[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
+  const [options, setOptions] = useState<LookupOptions>(DEFAULT_OPTIONS);
+  const [templates, setTemplates] = useState<ConsentTemplate[]>(
+    DEFAULT_CONSENT_TEMPLATES,
+  );
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
-  /**
-   * The answers, and what each screen looked like when it was left.
-   *
-   * Refs rather than state on purpose: these change on every keystroke, and
-   * nothing on the page is derived from them while a screen is open. Holding
-   * them in state would re-render the whole wizard on each character typed,
-   * and would hand each screen a fresh `initial` object as it went.
-   */
   const parts = useRef<Parts>({});
   const snapshots = useRef<Snapshots>({});
 
   const [submitting, setSubmitting] = useState(false);
   const [outcome, setOutcome] = useState<Outcome>({ kind: "none" });
 
-  /**
-   * Where a failed submit put its errors. Held per screen so the applicant
-   * can be sent back to screen 2 with the SSN field marked, rather than left
-   * on screen 3 with a message about a field they cannot see.
-   */
   const [serverErrors, setServerErrors] = useState<{
     step: 1 | 2 | 3;
     message: string;
     errors: FieldErrors;
   } | null>(null);
 
-  /** Drives the quote rail. Screen 1 pushes changes up as the slider moves. */
   const [quote, setQuote] = useState<{
     amount: number;
     termMonths: number | "";
@@ -133,51 +99,42 @@ export function ApplyWizard() {
     [],
   );
 
-  const loadForm = useCallback(() => {
-    setLoadError(null);
-    Promise.all([
-      api.get<LookupOptions>("/lookup/options"),
-      api.get<ConsentTemplate[]>("/consents/templates"),
-    ])
-      .then(([o, t]) => {
-        setOptions(o);
-        setTemplates(t);
-      })
-      .catch((err) => {
-        // A dead end here is the worst possible failure - the applicant sees
-        // nothing and we learn nothing. Say what broke and offer a retry.
-        const reachable =
-          !(err instanceof ApiRequestError) || err.payload.statusCode !== 0;
-        setLoadError(
-          reachable
-            ? "We could not load the application form. Please try again in a moment."
-            : "We could not reach our servers. Check your connection and try again.",
-        );
-        if (process.env.NODE_ENV !== "production") {
-          // eslint-disable-next-line no-console
-          console.error(
-            `[apply] Failed to load form data from ${API_BASE}. ` +
-              "Is the API running, and does NEXT_PUBLIC_API_URL point at it?",
-            err,
-          );
-        }
-      });
-  }, []);
-
   useEffect(() => {
-    initTracking();
+    let cancelled = false;
+
     api
-      .post("/applications/session", { tracking: getTracking() })
-      .catch(() => undefined);
-    loadForm();
-  }, [loadForm]);
+      .get<LookupOptions>("/lookup/options")
+      .then((data) => {
+        if (!cancelled) {
+          setOptions((current) => ({
+            ...current,
+            ...data,
+          }));
+        }
+      })
+      .catch(() => {
+        // No backend - DEFAULT_OPTIONS already renders the whole form.
+      });
+
+    api
+      .get<ConsentTemplate[]>("/consents/templates")
+      .then((data) => {
+        if (!cancelled && Array.isArray(data) && data.length)
+          setTemplates(data);
+      })
+      .catch(() => {
+        // No backend - the bundled templates already render every checkbox.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const templatesForStep = useCallback(
     (n: 1 | 2 | 3) => templates.filter((t) => t.step === n),
     [templates],
   );
-
-  // ---------------- the answers live here
 
   const onStep1Change = useCallback((s: Step1Snapshot) => {
     snapshots.current[1] = s;
@@ -189,10 +146,6 @@ export function ApplyWizard() {
     snapshots.current[3] = s;
   }, []);
 
-  /**
-   * Deliberate navigation, which also drops a stale error from an earlier
-   * submit - the applicant has just been through the screen it was raised on.
-   */
   const goTo = useCallback((target: 1 | 2 | 3) => {
     setStep(target);
     setServerErrors(null);
@@ -215,15 +168,6 @@ export function ApplyWizard() {
     [goTo],
   );
 
-  // ---------------- the one submit
-
-  /**
-   * Everything the applicant entered, in one request.
-   *
-   * The consents from all three screens go up in a single array; the server
-   * splits them back out by the screen each checkbox was shown on, so the
-   * evidence rows are unchanged.
-   */
   const onSubmitAll = useCallback(
     async (step3Part: SubmitRequestPart) => {
       parts.current[3] = step3Part;
@@ -255,12 +199,10 @@ export function ApplyWizard() {
               kind: "duplicate",
               message: err.payload.message,
               applicationId: err.payload.applicationId,
+              email: err.payload.email,
             });
             return;
           }
-          // The server tags field errors with the screen they belong to.
-          // An untagged one came from the request-body check that runs before
-          // any of that, so fall back to where the fields themselves live.
           const target = (err.payload.step ?? screenFor(err.fieldErrors)) as
             | 1
             | 2
@@ -291,55 +233,6 @@ export function ApplyWizard() {
   const bannerFor = (n: 1 | 2 | 3) =>
     serverErrors?.step === n ? serverErrors.message : null;
 
-  // ---------------- render
-
-  if (loadError) {
-    return (
-      <div
-        role="alert"
-        className="rounded-xl border border-red-300 bg-red-50 p-6"
-      >
-        <h1 className="text-lg font-semibold text-red-900">
-          We could not start your application
-        </h1>
-        <p className="mt-2 text-sm leading-relaxed text-red-800">{loadError}</p>
-        <div className="mt-5 flex flex-col gap-3 sm:flex-row">
-          <button
-            type="button"
-            onClick={loadForm}
-            className="rounded-lg bg-red-700 px-6 py-3 text-sm font-semibold text-white transition hover:bg-red-800"
-          >
-            Try again
-          </button>
-          <a
-            href={`tel:${(process.env.NEXT_PUBLIC_SUPPORT_PHONE || "(800) 555-0143").replace(/\D/g, "")}`}
-            className="rounded-lg border border-red-300 bg-white px-6 py-3 text-center text-sm font-semibold text-red-800 transition hover:bg-red-50"
-          >
-            Apply by phone:{" "}
-            {process.env.NEXT_PUBLIC_SUPPORT_PHONE || "(800) 555-0143"}
-          </a>
-        </div>
-        {process.env.NODE_ENV !== "production" && (
-          <p className="mt-5 rounded-md bg-red-100 p-3 font-mono text-xs text-red-900">
-            dev hint: the form loads from {API_BASE}/api - start the API (npm
-            run start:dev in loan-backend) or set NEXT_PUBLIC_API_URL in
-            loan-frontend/.env.local
-          </p>
-        )}
-      </div>
-    );
-  }
-
-  if (!options) {
-    return (
-      <div className="space-y-4" aria-busy="true">
-        <div className="h-8 w-40 animate-pulse rounded bg-slate-200" />
-        <div className="h-48 animate-pulse rounded-xl bg-slate-200" />
-        <div className="h-64 animate-pulse rounded-xl bg-slate-200" />
-      </div>
-    );
-  }
-
   if (outcome.kind === "duplicate") {
     return (
       <DuplicateScreen
@@ -359,8 +252,6 @@ export function ApplyWizard() {
 
       <ProgressIndicator current={step} onNavigate={goTo} />
 
-      {/* Form on the left, live quote on the right. On narrow screens the
-          quote collapses to a pinned bar so the payment is never off-screen. */}
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-10">
         <div className="min-w-0">
           {step === 1 && (
@@ -422,16 +313,14 @@ export function ApplyWizard() {
   );
 }
 
-/**
- * One application per applicant. The reference is shown so they can look it
- * up rather than be left wondering which one we already hold.
- */
 function DuplicateScreen({
   message,
   applicationId,
+  email,
 }: {
   message: string;
   applicationId?: string;
+  email?: string;
 }) {
   return (
     <div className="space-y-5 rounded-xl border border-slate-200 bg-white p-6">
@@ -445,7 +334,7 @@ function DuplicateScreen({
         </p>
       )}
       <a
-        href="/loan-status"
+        href={`/loan-status?ref=${applicationId}&email=${email}`}
         className="inline-block rounded-lg bg-brand-600 px-6 py-3 text-sm font-semibold text-white transition hover:bg-brand-700"
       >
         Check my application status
@@ -454,13 +343,6 @@ function DuplicateScreen({
   );
 }
 
-/**
- * The end of the form.
- *
- * No decision is made here and none is implied - the application is in, and
- * the one thing still outstanding is the applicant confirming their bank
- * account from the email we have just sent.
- */
 function SubmittedScreen({ result }: { result: SubmitResponse }) {
   return (
     <div className="space-y-5 rounded-xl border border-brand-300 bg-white p-6">
@@ -480,9 +362,9 @@ function SubmittedScreen({ result }: { result: SubmitResponse }) {
         </p>
         <p className="mt-2 text-sm leading-relaxed text-amber-900">
           <strong>One last step:</strong> check your email and click the
-          verification link to confirm your bank account belongs to you. We
-          have just sent it, and we will send reminders over the next three
-          days if we do not hear from you.
+          verification link to confirm your bank account belongs to you. We have
+          just sent it, and we will send reminders over the next three days if
+          we do not hear from you.
         </p>
       </div>
 
@@ -515,7 +397,10 @@ function SubmittedScreen({ result }: { result: SubmitResponse }) {
 
       <p className="text-sm leading-relaxed text-slate-600">
         Keep your reference safe - you can check your application on our{" "}
-        <a href="/loan-status" className="font-medium text-brand-700 underline">
+        <a
+          href={`/loan-status?ref=${result.applicationId}&email=${result.email}`}
+          className="font-medium text-brand-700 underline"
+        >
           Loan Status
         </a>{" "}
         page at any time.

@@ -72,6 +72,7 @@ export interface ApiError {
   applicationId?: string;
   /** Which screen a field error belongs to, so the form can reopen it. */
   step?: number;
+  email?: string;
 }
 
 export interface Offer {
@@ -168,4 +169,5 @@ export interface SubmitResponse {
   bankVerificationUrl?: string;
   /** How many drip emails were scheduled - six, two a day for three days. */
   dripScheduled?: number;
+  email?: string;
 }

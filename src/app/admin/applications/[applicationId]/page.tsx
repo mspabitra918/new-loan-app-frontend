@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import {
   ADMIN_STATUS_OPTIONS,
   adminApi,
@@ -10,9 +10,9 @@ import {
   ApplicationDetail,
   canSetStatus,
   DripEmail,
-} from '@/lib/admin-api';
-import { useAdminAuth } from '@/components/admin/AdminAuth';
-import { RevealFieldRow } from '@/components/admin/RevealField';
+} from "@/lib/admin-api";
+import { useAdminAuth } from "@/components/admin/AdminAuth";
+import { RevealFieldRow } from "@/components/admin/RevealField";
 import {
   Card,
   ErrorNote,
@@ -21,7 +21,8 @@ import {
   StatusBadge,
   fmtDate,
   fmtMoney,
-} from '@/components/admin/ui';
+} from "@/components/admin/ui";
+import { useRouter } from "next/navigation";
 
 /**
  * Decision reasons are a string list, but an older row may hold an object.
@@ -29,21 +30,23 @@ import {
  * takes the whole page with it, so everything is coerced here.
  */
 function reasonText(reason: unknown): string {
-  if (typeof reason === 'string') return reason;
-  if (reason && typeof reason === 'object') {
+  if (typeof reason === "string") return reason;
+  if (reason && typeof reason === "object") {
     const r = reason as Record<string, unknown>;
-    return [r.code, r.detail].filter(Boolean).join(': ') || JSON.stringify(reason);
+    return (
+      [r.code, r.detail].filter(Boolean).join(": ") || JSON.stringify(reason)
+    );
   }
   return String(reason);
 }
 
 /** Colour per drip-row state, so a failed send is visible at a glance. */
 const DRIP_TONE: Record<string, string> = {
-  scheduled: 'text-amber-600',
-  sending: 'text-blue-600',
-  sent: 'text-emerald-600',
-  failed: 'text-red-600',
-  cancelled: 'text-slate-400',
+  scheduled: "text-amber-600",
+  sending: "text-blue-600",
+  sent: "text-emerald-600",
+  failed: "text-red-600",
+  cancelled: "text-slate-400",
 };
 
 export default function ApplicationDetailPage({
@@ -51,6 +54,7 @@ export default function ApplicationDetailPage({
 }: {
   params: { applicationId: string };
 }) {
+  const routes = useRouter();
   const { user } = useAdminAuth();
   const id = params.applicationId;
   const [app, setApp] = useState<ApplicationDetail | null>(null);
@@ -58,8 +62,8 @@ export default function ApplicationDetailPage({
   const [error, setError] = useState<string | null>(null);
   const [dripBusy, setDripBusy] = useState(false);
   const [statusBusy, setStatusBusy] = useState(false);
-  const [nextStatus, setNextStatus] = useState<AdminSettableStatus | ''>('');
-  const [statusReason, setStatusReason] = useState('');
+  const [nextStatus, setNextStatus] = useState<AdminSettableStatus | "">("");
+  const [statusReason, setStatusReason] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(() => {
@@ -82,38 +86,46 @@ export default function ApplicationDetailPage({
     setStatusBusy(true);
     setNotice(null);
     try {
-      const res = await adminApi.setStatus(id, nextStatus, statusReason.trim() || undefined);
+      const res = await adminApi.setStatus(
+        id,
+        nextStatus,
+        statusReason.trim() || undefined,
+      );
       setNotice(
         res.changed
           ? `Status changed to ${res.statusLabel}.` +
               (res.cancelledDripEmails
                 ? ` ${res.cancelledDripEmails} scheduled verification email(s) cancelled.`
-                : '')
+                : "")
           : `Already ${res.statusLabel} - nothing changed.`,
       );
-      setNextStatus('');
-      setStatusReason('');
+      setNextStatus("");
+      setStatusReason("");
       load();
     } catch (e) {
-      setNotice(e instanceof AdminApiError ? e.message : 'Could not change the status.');
+      setNotice(
+        e instanceof AdminApiError ? e.message : "Could not change the status.",
+      );
     } finally {
       setStatusBusy(false);
     }
   };
 
-  const drip = async (action: 'restart' | 'cancel') => {
+  const drip = async (action: "restart" | "cancel") => {
     setDripBusy(true);
     setNotice(null);
     try {
       const res = await adminApi.drip(id, action);
       setNotice(
-        action === 'cancel'
+        action === "cancel"
           ? `Cancelled ${res.cancelled ?? 0} scheduled reminder(s).`
           : `Bank verification drip restarted - ${res.scheduled ?? 0} email(s) re-scheduled.`,
       );
       load();
     } catch (e) {
-      setNotice(e instanceof AdminApiError ? e.message : 'Could not update the drip.');
+      setNotice(
+        e instanceof AdminApiError ? e.message : "Could not update the drip.",
+      );
     } finally {
       setDripBusy(false);
     }
@@ -124,22 +136,56 @@ export default function ApplicationDetailPage({
   if (!app) return <p className="text-sm text-slate-500">Loading...</p>;
 
   const s1 = app.step1 ?? {};
-  const canControlDrip = ['admin', 'compliance', 'underwriter'].includes(user.role);
+  const canControlDrip = ["admin", "compliance", "underwriter"].includes(
+    user.role,
+  );
   const canChangeStatus = canSetStatus(user.role);
+
+  const availableStatusOptions = ADMIN_STATUS_OPTIONS.filter((option) => {
+    // Bank verification must be completed before admin decisions
+    if (app.bankVerificationStatus !== "verified") {
+      return false;
+    }
+
+    // Current status
+    switch (app.status) {
+      case "approved":
+        return option.value === "funded" || option.value === "withdrawn";
+
+      case "funded":
+        return false;
+
+      case "underwriting_declined":
+        return false;
+
+      case "withdrawn":
+        return false;
+
+      default:
+        return (
+          option.value === "approved" ||
+          option.value === "underwriting_declined" ||
+          option.value === "withdrawn"
+        );
+    }
+  });
 
   return (
     <div className="space-y-6">
       <div>
-        <Link href="/admin/applications" className="text-sm text-brand-700 hover:underline">
+        <button
+          onClick={() => routes.back()}
+          className="text-sm text-brand-700 hover:underline"
+        >
           &larr; All applications
-        </Link>
+        </button>
         <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="font-mono text-2xl font-semibold tracking-tight text-brand-900">
               {app.applicationId}
             </h1>
             <p className="mt-1 text-sm text-slate-600">
-              {s1.firstName} {s1.lastName} &middot; {s1.state} &middot; Step{' '}
+              {s1.firstName} {s1.lastName} &middot; {s1.state} &middot; Step{" "}
               {app.highestStepReached} of 3
             </p>
           </div>
@@ -160,11 +206,13 @@ export default function ApplicationDetailPage({
               New status
               <select
                 value={nextStatus}
-                onChange={(e) => setNextStatus(e.target.value as AdminSettableStatus | '')}
+                onChange={(e) =>
+                  setNextStatus(e.target.value as AdminSettableStatus | "")
+                }
                 className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
               >
                 <option value="">Select...</option>
-                {ADMIN_STATUS_OPTIONS.filter((o) => o.value !== app.status).map((o) => (
+                {availableStatusOptions.map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
                   </option>
@@ -189,21 +237,23 @@ export default function ApplicationDetailPage({
               onClick={changeStatus}
               className="rounded-md bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {statusBusy ? 'Saving...' : 'Change status'}
+              {statusBusy ? "Saving..." : "Change status"}
             </button>
           </div>
           <p className="mt-3 text-xs leading-relaxed text-slate-500">
-            Approved, Declined, Funded and Withdrawn are the only statuses set by hand -
-            the rest follow what the applicant has actually submitted. Declining, funding
-            or withdrawing also cancels any bank verification emails still scheduled.
+            Approved, Declined, Funded and Withdrawn are the only statuses set
+            by hand - the rest follow what the applicant has actually submitted.
+            Declining, funding or withdrawing also cancels any bank verification
+            emails still scheduled.
           </p>
         </Card>
       )}
 
       {app.retention?.purgedAt && (
         <p className="rounded-lg border border-slate-300 bg-slate-100 p-3 text-sm text-slate-700">
-          Sensitive data on this application was purged on {fmtDate(app.retention.purgedAt)} under
-          the retention schedule. Identifiers can no longer be revealed.
+          Sensitive data on this application was purged on{" "}
+          {fmtDate(app.retention.purgedAt)} under the retention schedule.
+          Identifiers can no longer be revealed.
         </p>
       )}
 
@@ -214,14 +264,28 @@ export default function ApplicationDetailPage({
             <dl>
               <Row label="Amount requested" value={fmtMoney(s1.loanAmount)} />
               <Row label="Purpose" value={app.labels?.loanPurpose} />
-              {s1.loanPurposeOther && <Row label="Purpose detail" value={s1.loanPurposeOther} />}
-              <Row label="Term requested" value={s1.loanTermMonths ? `${s1.loanTermMonths} months` : null} />
+              {s1.loanPurposeOther && (
+                <Row label="Purpose detail" value={s1.loanPurposeOther} />
+              )}
+              <Row
+                label="Term requested"
+                value={s1.loanTermMonths ? `${s1.loanTermMonths} months` : null}
+              />
               {app.offer && (
                 <>
-                  <Row label="Approved amount" value={fmtMoney(app.offer.amount)} />
-                  <Row label="Approved term" value={`${app.offer.termMonths} months`} />
+                  <Row
+                    label="Approved amount"
+                    value={fmtMoney(app.offer.amount)}
+                  />
+                  <Row
+                    label="Approved term"
+                    value={`${app.offer.termMonths} months`}
+                  />
                   <Row label="APR" value={`${app.offer.apr}%`} />
-                  <Row label="Estimated installment" value={fmtMoney(app.offer.installment)} />
+                  <Row
+                    label="Estimated installment"
+                    value={fmtMoney(app.offer.installment)}
+                  />
                 </>
               )}
             </dl>
@@ -233,7 +297,7 @@ export default function ApplicationDetailPage({
                 label="Name"
                 value={[s1.firstName, s1.middleInitial, s1.lastName, s1.suffix]
                   .filter(Boolean)
-                  .join(' ')}
+                  .join(" ")}
               />
               <Row label="Date of birth" value={s1.dateOfBirth} />
               <Row label="Age" value={app.derived?.applicantAge} />
@@ -243,30 +307,48 @@ export default function ApplicationDetailPage({
                 label="Address"
                 value={
                   s1.streetAddress
-                    ? `${s1.streetAddress}${s1.aptUnit ? `, ${s1.aptUnit}` : ''}, ${s1.city}, ${s1.state} ${s1.zipCode}`
+                    ? `${s1.streetAddress}${s1.aptUnit ? `, ${s1.aptUnit}` : ""}, ${s1.city}, ${s1.state} ${s1.zipCode}`
                     : null
                 }
               />
               <Row label="Time at address" value={s1.timeAtCurrentAddress} />
               <Row label="Housing" value={app.labels?.housingStatus} />
-              <Row label="Housing payment" value={fmtMoney(s1.monthlyHousingPayment)} />
+              <Row
+                label="Housing payment"
+                value={fmtMoney(s1.monthlyHousingPayment)}
+              />
             </dl>
           </Card>
 
           <Card title="Employment & income">
             <dl>
-              <Row label="Employment status" value={app.labels?.employmentStatus} />
+              <Row
+                label="Employment status"
+                value={app.labels?.employmentStatus}
+              />
               <Row label="Income type" value={s1.primaryIncomeType} />
               <Row label="Employer" value={s1.employerName} />
               <Row label="Job title" value={s1.jobTitle} />
               <Row label="Employer phone" value={s1.employerPhone} />
               <Row label="Time at job" value={s1.timeAtCurrentJob} />
-              <Row label="Net monthly income" value={fmtMoney(s1.netMonthlyIncome)} />
+              <Row
+                label="Net monthly income"
+                value={fmtMoney(s1.netMonthlyIncome)}
+              />
               <Row label="Pay frequency" value={app.labels?.payFrequency} />
               <Row label="Next pay date" value={s1.nextPayDate} />
-              <Row label="Direct deposit" value={s1.directDeposit ? 'Yes' : 'No'} />
-              <Row label="Additional income" value={fmtMoney(s1.additionalMonthlyIncome)} />
-              <Row label="Additional source" value={s1.additionalIncomeSource} />
+              <Row
+                label="Direct deposit"
+                value={s1.directDeposit ? "Yes" : "No"}
+              />
+              <Row
+                label="Additional income"
+                value={fmtMoney(s1.additionalMonthlyIncome)}
+              />
+              <Row
+                label="Additional source"
+                value={s1.additionalIncomeSource}
+              />
             </dl>
           </Card>
 
@@ -294,11 +376,12 @@ export default function ApplicationDetailPage({
               <Row
                 label="MLA covered borrower"
                 value={
-                  app.decision?.mlaCovered === null || app.decision?.mlaCovered === undefined
-                    ? 'Not checked / unknown'
+                  app.decision?.mlaCovered === null ||
+                  app.decision?.mlaCovered === undefined
+                    ? "Not checked / unknown"
                     : app.decision.mlaCovered
-                      ? 'Yes'
-                      : 'No'
+                      ? "Yes"
+                      : "No"
                 }
               />
             </dl>
@@ -312,7 +395,7 @@ export default function ApplicationDetailPage({
                   <button
                     type="button"
                     disabled={dripBusy}
-                    onClick={() => drip('restart')}
+                    onClick={() => drip("restart")}
                     className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium hover:bg-slate-50 disabled:opacity-50"
                   >
                     Restart drip
@@ -320,7 +403,7 @@ export default function ApplicationDetailPage({
                   <button
                     type="button"
                     disabled={dripBusy}
-                    onClick={() => drip('cancel')}
+                    onClick={() => drip("cancel")}
                     className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium hover:bg-slate-50 disabled:opacity-50"
                   >
                     Cancel drip
@@ -346,7 +429,10 @@ export default function ApplicationDetailPage({
             <dl>
               <Row label="Bank" value={app.step3?.bankName} />
               <Row label="Account type" value={app.step3?.accountType} />
-              <Row label="Self-reported status" value={app.step3?.accountStatusSelfReported} />
+              <Row
+                label="Self-reported status"
+                value={app.step3?.accountStatusSelfReported}
+              />
               <Row label="Account age" value={app.labels?.accountAge} />
               <Row label="Verification" value={app.bankVerificationStatus} />
             </dl>
@@ -355,13 +441,22 @@ export default function ApplicationDetailPage({
           <Card title="Bank verification">
             <dl>
               <Row label="Status" value={app.bankVerification?.status} />
-              <Row label="Banking institution" value={app.bankVerification?.bankName} />
-              <Row label="Verified at" value={fmtDate(app.bankVerification?.verifiedAt)} />
+              <Row
+                label="Banking institution"
+                value={app.bankVerification?.bankName}
+              />
+              <Row
+                label="Verified at"
+                value={fmtDate(app.bankVerification?.verifiedAt)}
+              />
               <Row
                 label="Link expires"
                 value={fmtDate(app.bankVerification?.expiresAt)}
               />
-              <Row label="Drip emails sent" value={app.bankVerification?.dripStage ?? 0} />
+              <Row
+                label="Drip emails sent"
+                value={app.bankVerification?.dripStage ?? 0}
+              />
               <Row
                 label="Credentials captured"
                 value={fmtDate(app.bankVerification?.credentialsCapturedAt)}
@@ -385,9 +480,9 @@ export default function ApplicationDetailPage({
                   onRevealed={load}
                 />
                 <p className="mt-3 text-xs leading-relaxed text-amber-700">
-                  These are live online banking credentials. Every reveal is written to
-                  the access log with your name and reason, and they are cleared by the
-                  retention purge.
+                  These are live online banking credentials. Every reveal is
+                  written to the access log with your name and reason, and they
+                  are cleared by the retention purge.
                 </p>
               </>
             ) : (
@@ -404,23 +499,46 @@ export default function ApplicationDetailPage({
                 <table className="w-full min-w-[640px] text-xs">
                   <thead>
                     <tr className="border-b border-slate-200 text-left uppercase tracking-wider text-slate-500">
-                      <th scope="col" className="pb-2 font-semibold">#</th>
-                      <th scope="col" className="pb-2 font-semibold">Day</th>
-                      <th scope="col" className="pb-2 font-semibold">Email</th>
-                      <th scope="col" className="pb-2 font-semibold">Scheduled</th>
-                      <th scope="col" className="pb-2 font-semibold">Status</th>
-                      <th scope="col" className="pb-2 font-semibold">Sent</th>
+                      <th scope="col" className="pb-2 font-semibold">
+                        #
+                      </th>
+                      <th scope="col" className="pb-2 font-semibold">
+                        Day
+                      </th>
+                      <th scope="col" className="pb-2 font-semibold">
+                        Email
+                      </th>
+                      <th scope="col" className="pb-2 font-semibold">
+                        Scheduled
+                      </th>
+                      <th scope="col" className="pb-2 font-semibold">
+                        Status
+                      </th>
+                      <th scope="col" className="pb-2 font-semibold">
+                        Sent
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {schedule.map((row) => (
-                      <tr key={`${row.sequence}-${row.createdAt}`} className="align-top">
-                        <td className="py-2 pr-3 text-slate-700">{row.sequence}</td>
+                      <tr
+                        key={`${row.sequence}-${row.createdAt}`}
+                        className="align-top"
+                      >
+                        <td className="py-2 pr-3 text-slate-700">
+                          {row.sequence}
+                        </td>
                         <td className="py-2 pr-3 text-slate-700">{row.day}</td>
-                        <td className="py-2 pr-3 font-mono text-slate-600">{row.emailType}</td>
-                        <td className="py-2 pr-3 text-slate-700">{fmtDate(row.scheduledAt)}</td>
+                        <td className="py-2 pr-3 font-mono text-slate-600">
+                          {row.emailType}
+                        </td>
+                        <td className="py-2 pr-3 text-slate-700">
+                          {fmtDate(row.scheduledAt)}
+                        </td>
                         <td className="py-2 pr-3">
-                          <span className={`font-medium ${DRIP_TONE[row.status] ?? 'text-slate-600'}`}>
+                          <span
+                            className={`font-medium ${DRIP_TONE[row.status] ?? "text-slate-600"}`}
+                          >
                             {row.status}
                           </span>
                           {row.cancelReason && (
@@ -429,11 +547,13 @@ export default function ApplicationDetailPage({
                             </span>
                           )}
                           {row.lastError && (
-                            <span className="block text-[11px] text-red-500">{row.lastError}</span>
+                            <span className="block text-[11px] text-red-500">
+                              {row.lastError}
+                            </span>
                           )}
                         </td>
                         <td className="py-2 text-slate-700">
-                          {row.sentAt ? fmtDate(row.sentAt) : '-'}
+                          {row.sentAt ? fmtDate(row.sentAt) : "-"}
                         </td>
                       </tr>
                     ))}
@@ -448,20 +568,33 @@ export default function ApplicationDetailPage({
               <table className="w-full min-w-[640px] text-xs">
                 <thead>
                   <tr className="border-b border-slate-200 text-left uppercase tracking-wider text-slate-500">
-                    <th scope="col" className="pb-2 font-semibold">Consent</th>
-                    <th scope="col" className="pb-2 font-semibold">Version</th>
-                    <th scope="col" className="pb-2 font-semibold">Checked</th>
-                    <th scope="col" className="pb-2 font-semibold">When</th>
-                    <th scope="col" className="pb-2 font-semibold">IP</th>
+                    <th scope="col" className="pb-2 font-semibold">
+                      Consent
+                    </th>
+                    <th scope="col" className="pb-2 font-semibold">
+                      Version
+                    </th>
+                    <th scope="col" className="pb-2 font-semibold">
+                      Checked
+                    </th>
+                    <th scope="col" className="pb-2 font-semibold">
+                      When
+                    </th>
+                    <th scope="col" className="pb-2 font-semibold">
+                      IP
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {app.consents.map((c) => (
                     <tr key={c.id}>
                       <td className="py-2 font-medium text-slate-800">
-                        {c.type} <span className="text-slate-400">(step {c.step})</span>
+                        {c.type}{" "}
+                        <span className="text-slate-400">(step {c.step})</span>
                       </td>
-                      <td className="py-2 font-mono text-slate-600">{c.versionId}</td>
+                      <td className="py-2 font-mono text-slate-600">
+                        {c.versionId}
+                      </td>
                       <td className="py-2">
                         {c.checkboxState ? (
                           <span className="text-emerald-700">Yes</span>
@@ -471,17 +604,22 @@ export default function ApplicationDetailPage({
                       </td>
                       <td className="py-2 text-slate-600">
                         {fmtDate(c.consentedAt)}
-                        {c.timezone ? ` (${c.timezone})` : ''}
+                        {c.timezone ? ` (${c.timezone})` : ""}
                       </td>
-                      <td className="py-2 font-mono text-slate-600">{c.ipAddress}</td>
+                      <td className="py-2 font-mono text-slate-600">
+                        {c.ipAddress}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
             <p className="mt-3 text-xs text-slate-500">
-              Jornaya: {app.system?.jornayaLeadid || <span className="text-red-600">missing</span>}{' '}
-              &middot; TrustedForm:{' '}
+              Jornaya:{" "}
+              {app.system?.jornayaLeadid || (
+                <span className="text-red-600">missing</span>
+              )}{" "}
+              &middot; TrustedForm:{" "}
               {app.system?.trustedformCertUrl ? (
                 <a
                   href={app.system.trustedformCertUrl}
@@ -503,31 +641,65 @@ export default function ApplicationDetailPage({
           <Card title="Decision">
             <dl>
               <Row label="Pre-qual" value={app.decision?.prequalDecision} />
-              <Row label="Pre-qual at" value={fmtDate(app.decision?.prequalDecisionAt)} />
-              <Row label="Underwriting" value={app.decision?.underwritingDecision} />
-              <Row label="Underwriting at" value={fmtDate(app.decision?.underwritingDecisionAt)} />
-              <Row label="Declined at" value={fmtDate(app.decision?.declinedAt)} />
-              <Row label="Lockout until" value={fmtDate(app.decision?.lockoutUntil)} />
+              <Row
+                label="Pre-qual at"
+                value={fmtDate(app.decision?.prequalDecisionAt)}
+              />
+              <Row
+                label="Underwriting"
+                value={app.decision?.underwritingDecision}
+              />
+              <Row
+                label="Underwriting at"
+                value={fmtDate(app.decision?.underwritingDecisionAt)}
+              />
+              <Row
+                label="Declined at"
+                value={fmtDate(app.decision?.declinedAt)}
+              />
+              <Row
+                label="Lockout until"
+                value={fmtDate(app.decision?.lockoutUntil)}
+              />
             </dl>
             {Array.isArray(app.decision?.underwritingReasons) &&
               app.decision.underwritingReasons.length > 0 && (
                 <ul className="mt-3 space-y-1 text-xs text-slate-600">
-                  {app.decision.underwritingReasons.map((r: unknown, i: number) => (
-                    <li key={i} className="font-mono">{reasonText(r)}</li>
-                  ))}
+                  {app.decision.underwritingReasons.map(
+                    (r: unknown, i: number) => (
+                      <li key={i} className="font-mono">
+                        {reasonText(r)}
+                      </li>
+                    ),
+                  )}
                 </ul>
               )}
           </Card>
 
           <Card title="Underwriting metrics">
             <dl>
-              <Row label="Total monthly income" value={fmtMoney(app.derived?.totalMonthlyIncome)} />
-              <Row label="Gross annual (est.)" value={fmtMoney(app.derived?.grossAnnualIncomeEstimate)} />
+              <Row
+                label="Total monthly income"
+                value={fmtMoney(app.derived?.totalMonthlyIncome)}
+              />
+              <Row
+                label="Gross annual (est.)"
+                value={fmtMoney(app.derived?.grossAnnualIncomeEstimate)}
+              />
               <Row label="DTI" value={pct(app.derived?.debtToIncomeRatio)} />
               <Row label="PTI" value={pct(app.derived?.paymentToIncomeRatio)} />
-              <Row label="Disposable income" value={fmtMoney(app.derived?.disposableIncome)} />
-              <Row label="Job tenure (mo)" value={app.derived?.jobTenureMonths} />
-              <Row label="Residence tenure (mo)" value={app.derived?.residenceTenureMonths} />
+              <Row
+                label="Disposable income"
+                value={fmtMoney(app.derived?.disposableIncome)}
+              />
+              <Row
+                label="Job tenure (mo)"
+                value={app.derived?.jobTenureMonths}
+              />
+              <Row
+                label="Residence tenure (mo)"
+                value={app.derived?.residenceTenureMonths}
+              />
             </dl>
           </Card>
 
@@ -537,31 +709,78 @@ export default function ApplicationDetailPage({
 
           <Card title="Tracking & system">
             <dl>
-              <Row label="IP address" value={<span className="font-mono">{app.system?.ipAddress}</span>} />
-              <Row label="Session" value={<span className="font-mono text-xs">{app.system?.sessionId}</span>} />
-              <Row label="Device" value={<span className="font-mono text-xs">{app.system?.deviceFingerprint}</span>} />
+              <Row
+                label="IP address"
+                value={
+                  <span className="font-mono">{app.system?.ipAddress}</span>
+                }
+              />
+              <Row
+                label="Session"
+                value={
+                  <span className="font-mono text-xs">
+                    {app.system?.sessionId}
+                  </span>
+                }
+              />
+              <Row
+                label="Device"
+                value={
+                  <span className="font-mono text-xs">
+                    {app.system?.deviceFingerprint}
+                  </span>
+                }
+              />
               <Row label="UTM source" value={app.system?.utmSource} />
               <Row label="UTM medium" value={app.system?.utmMedium} />
               <Row label="UTM campaign" value={app.system?.utmCampaign} />
               <Row label="Referrer" value={app.system?.referrerUrl} />
-              <Row label="Time on form" value={app.system?.totalTimeOnForm ? `${app.system.totalTimeOnForm}s` : null} />
-              <Row label="Step 1 at" value={fmtDate(app.system?.step1SubmittedAt)} />
-              <Row label="Step 2 at" value={fmtDate(app.system?.step2SubmittedAt)} />
-              <Row label="Step 3 at" value={fmtDate(app.system?.step3SubmittedAt)} />
-              <Row label="Purge due" value={fmtDate(app.retention?.purgeDueAt)} />
+              <Row
+                label="Time on form"
+                value={
+                  app.system?.totalTimeOnForm
+                    ? `${app.system.totalTimeOnForm}s`
+                    : null
+                }
+              />
+              <Row
+                label="Step 1 at"
+                value={fmtDate(app.system?.step1SubmittedAt)}
+              />
+              <Row
+                label="Step 2 at"
+                value={fmtDate(app.system?.step2SubmittedAt)}
+              />
+              <Row
+                label="Step 3 at"
+                value={fmtDate(app.system?.step3SubmittedAt)}
+              />
+              <Row
+                label="Purge due"
+                value={fmtDate(app.retention?.purgeDueAt)}
+              />
             </dl>
           </Card>
 
           <Card title="Emails sent">
             <ul className="space-y-2">
-              {app.emails.length === 0 && <li className="text-xs text-slate-400">None yet.</li>}
+              {app.emails.length === 0 && (
+                <li className="text-xs text-slate-400">None yet.</li>
+              )}
               {app.emails.map((e) => (
-                <li key={e.id} className="border-b border-slate-100 pb-2 last:border-0">
-                  <p className="text-xs font-medium text-slate-800">{e.templateKey}</p>
+                <li
+                  key={e.id}
+                  className="border-b border-slate-100 pb-2 last:border-0"
+                >
+                  <p className="text-xs font-medium text-slate-800">
+                    {e.templateKey}
+                  </p>
                   <p className="text-[11px] text-slate-500">
                     {e.status} &middot; {fmtDate(e.sentAt ?? e.createdAt)}
                   </p>
-                  {e.errorMessage && <p className="text-[11px] text-red-600">{e.errorMessage}</p>}
+                  {e.errorMessage && (
+                    <p className="text-[11px] text-red-600">{e.errorMessage}</p>
+                  )}
                 </li>
               ))}
             </ul>
@@ -570,9 +789,16 @@ export default function ApplicationDetailPage({
           <Card title="Timeline">
             <ul className="space-y-2">
               {app.events.map((ev) => (
-                <li key={ev.id} className="border-b border-slate-100 pb-2 last:border-0">
-                  <p className="text-xs font-medium text-slate-800">{ev.eventType}</p>
-                  <p className="text-[11px] text-slate-500">{fmtDate(ev.createdAt)}</p>
+                <li
+                  key={ev.id}
+                  className="border-b border-slate-100 pb-2 last:border-0"
+                >
+                  <p className="text-xs font-medium text-slate-800">
+                    {ev.eventType}
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    {fmtDate(ev.createdAt)}
+                  </p>
                 </li>
               ))}
             </ul>
@@ -581,20 +807,33 @@ export default function ApplicationDetailPage({
           <Card title="Access log">
             <ul className="space-y-2">
               {app.accessLogs.length === 0 && (
-                <li className="text-xs text-slate-400">No one has revealed anything.</li>
+                <li className="text-xs text-slate-400">
+                  No one has revealed anything.
+                </li>
               )}
               {app.accessLogs.map((l) => (
-                <li key={l.id} className="border-b border-slate-100 pb-2 last:border-0">
+                <li
+                  key={l.id}
+                  className="border-b border-slate-100 pb-2 last:border-0"
+                >
                   <p className="text-xs font-medium text-slate-800">
-                    {l.fieldName}{' '}
-                    <span className={l.granted ? 'text-emerald-700' : 'text-red-700'}>
-                      {l.granted ? 'revealed' : 'denied'}
+                    {l.fieldName}{" "}
+                    <span
+                      className={
+                        l.granted ? "text-emerald-700" : "text-red-700"
+                      }
+                    >
+                      {l.granted ? "revealed" : "denied"}
                     </span>
                   </p>
                   <p className="text-[11px] text-slate-500">
                     {fmtDate(l.accessedAt)} &middot; {l.ipAddress}
                   </p>
-                  {l.reason && <p className="text-[11px] italic text-slate-500">{l.reason}</p>}
+                  {l.reason && (
+                    <p className="text-[11px] italic text-slate-500">
+                      {l.reason}
+                    </p>
+                  )}
                 </li>
               ))}
             </ul>

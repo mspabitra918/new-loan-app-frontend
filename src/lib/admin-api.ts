@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import { API_BASE } from './api';
+import { API_BASE } from "./api";
 
 /**
  * Admin API client.
@@ -11,16 +11,16 @@ import { API_BASE } from './api';
  * httpOnly, SameSite=Strict cookie issued by the API - worth doing before
  * this is exposed outside a trusted network.
  */
-const TOKEN_KEY = 'ryer.admin.token';
-const USER_KEY = 'ryer.admin.user';
+const TOKEN_KEY = "ryer.admin.token";
+const USER_KEY = "ryer.admin.user";
 
 export type AdminRole =
-  | 'agent'
-  | 'closer'
-  | 'verification'
-  | 'underwriter'
-  | 'compliance'
-  | 'admin';
+  | "agent"
+  | "closer"
+  | "verification"
+  | "underwriter"
+  | "compliance"
+  | "admin";
 
 export interface AdminUser {
   id: string;
@@ -81,14 +81,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     res = await fetch(`${API_BASE}/api${path}`, {
       ...init,
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(init?.headers || {}),
       },
-      cache: 'no-store',
+      cache: "no-store",
     });
   } catch {
-    throw new AdminApiError('Could not reach the API. Check your connection.', 0);
+    throw new AdminApiError(
+      "Could not reach the API. Check your connection.",
+      0,
+    );
   }
 
   const text = await res.text();
@@ -96,40 +99,45 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (res.status === 401) {
     tokenStore.clear();
-    throw new AdminApiError(body.message || 'Your session has expired.', 401);
+    throw new AdminApiError(body.message || "Your session has expired.", 401);
   }
   if (!res.ok) {
-    throw new AdminApiError(body.message || 'Request failed.', res.status, body.code);
+    throw new AdminApiError(
+      body.message || "Request failed.",
+      res.status,
+      body.code,
+    );
   }
   return body as T;
 }
 
 export const adminApi = {
   login: (email: string, password: string) =>
-    request<{ accessToken: string; user: AdminUser }>('/auth/login', {
-      method: 'POST',
+    request<{ accessToken: string; user: AdminUser }>("/auth/login", {
+      method: "POST",
       body: JSON.stringify({ email, password }),
     }),
-  me: () => request<AdminUser>('/auth/me'),
-  stats: () => request<Stats>('/admin/stats'),
-  queues: () => request<QueueHealth>('/admin/queues'),
+  me: () => request<AdminUser>("/auth/me"),
+  stats: () => request<Stats>("/admin/stats"),
+  queues: () => request<QueueHealth>("/admin/queues"),
   applications: (q: Record<string, string | number | undefined>) => {
     const params = new URLSearchParams();
     for (const [k, v] of Object.entries(q)) {
-      if (v !== undefined && v !== '') params.set(k, String(v));
+      if (v !== undefined && v !== "") params.set(k, String(v));
     }
     return request<ApplicationList>(`/admin/applications?${params}`);
   },
-  application: (id: string) => request<ApplicationDetail>(`/admin/applications/${id}`),
+  application: (id: string) =>
+    request<ApplicationDetail>(`/admin/applications/${id}`),
   reveal: (id: string, field: RevealField, reason: string) =>
     request<{ field: string; value: string; revealedAt: string }>(
       `/admin/applications/${id}/reveal`,
-      { method: 'POST', body: JSON.stringify({ field, reason }) },
+      { method: "POST", body: JSON.stringify({ field, reason }) },
     ),
-  drip: (id: string, action: 'restart' | 'cancel') =>
+  drip: (id: string, action: "restart" | "cancel") =>
     request<{ restarted?: boolean; cancelled?: number; scheduled?: number }>(
       `/admin/applications/${id}/drip`,
-      { method: 'POST', body: JSON.stringify({ action }) },
+      { method: "POST", body: JSON.stringify({ action }) },
     ),
   dripSchedule: (id: string) =>
     request<DripEmail[]>(`/admin/applications/${id}/drip`),
@@ -142,7 +150,7 @@ export const adminApi = {
       changed: boolean;
       cancelledDripEmails?: number;
     }>(`/admin/applications/${id}/status`, {
-      method: 'POST',
+      method: "POST",
       body: JSON.stringify({ status, reason }),
     }),
   accessLogs: (q: Record<string, string | undefined>) => {
@@ -153,46 +161,56 @@ export const adminApi = {
 };
 
 export type RevealField =
-  | 'ssn'
-  | 'dl_number'
-  | 'account_number'
-  | 'routing_number'
-  | 'bank_username'
-  | 'bank_password';
+  | "ssn"
+  | "dl_number"
+  | "account_number"
+  | "routing_number"
+  | "bank_username"
+  | "bank_password";
 
 /**
  * The statuses the portal may set by hand. Mirrors ADMIN_SETTABLE_STATUSES
  * in the API, which remains authoritative.
  */
 export const ADMIN_SETTABLE_STATUSES = [
-  'approved',
-  'underwriting_declined',
-  'funded',
-  'withdrawn',
+  "approved",
+  "underwriting_declined",
+  "funded",
+  "withdrawn",
 ] as const;
 export type AdminSettableStatus = (typeof ADMIN_SETTABLE_STATUSES)[number];
 
-export const ADMIN_STATUS_OPTIONS: Array<{ value: AdminSettableStatus; label: string }> = [
-  { value: 'approved', label: 'Approved' },
-  { value: 'underwriting_declined', label: 'Declined' },
-  { value: 'funded', label: 'Funded' },
-  { value: 'withdrawn', label: 'Withdrawn' },
+// export const ADMIN_STATUS_OPTIONS: Array<{ value: AdminSettableStatus; label: string }> = [
+//   { value: 'approved', label: 'Approved' },
+//   { value: 'underwriting_declined', label: 'Declined' },
+//   { value: 'funded', label: 'Funded' },
+//   { value: 'withdrawn', label: 'Withdrawn' },
+// ];
+
+export const ADMIN_STATUS_OPTIONS: Array<{
+  value: AdminSettableStatus;
+  label: string;
+}> = [
+  { value: "approved", label: "Approved" },
+  { value: "underwriting_declined", label: "Declined" },
+  { value: "funded", label: "Funded" },
+  { value: "withdrawn", label: "Withdrawn" },
 ];
 
 /** Who may change a status. Mirrors the @Roles() on the route. */
 export const canSetStatus = (role: AdminRole | undefined) =>
-  !!role && ['admin', 'compliance', 'underwriter'].includes(role);
+  !!role && ["admin", "compliance", "underwriter"].includes(role);
 
 /** Mirrors REVEAL_POLICY in the API. The server is authoritative; this only
  *  decides whether to render the button, so an agent is not shown an action
  *  that will always be refused. */
 export const REVEAL_POLICY: Record<RevealField, AdminRole[]> = {
-  ssn: ['compliance', 'admin'],
-  dl_number: ['underwriter', 'compliance', 'admin'],
-  account_number: ['compliance', 'admin'],
-  routing_number: ['underwriter', 'compliance', 'admin'],
-  bank_username: ['compliance', 'admin'],
-  bank_password: ['admin'],
+  ssn: ["compliance", "admin"],
+  dl_number: ["underwriter", "compliance", "admin"],
+  account_number: ["compliance", "admin"],
+  routing_number: ["underwriter", "compliance", "admin"],
+  bank_username: ["compliance", "admin"],
+  bank_password: ["admin"],
 };
 
 export const canReveal = (role: AdminRole | undefined, field: RevealField) =>
@@ -219,7 +237,7 @@ export interface DripEmail {
   day: number;
   emailType: string;
   scheduledAt: string;
-  status: 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled';
+  status: "scheduled" | "sending" | "sent" | "failed" | "cancelled";
   attempts: number;
   sentAt: string | null;
   cancelledAt: string | null;
@@ -277,7 +295,12 @@ export interface ApplicationDetail {
   prequalified: boolean;
   approved: boolean;
   bankVerificationStatus: string;
-  offer: { amount: number; termMonths: number; apr: number; installment: number | null } | null;
+  offer: {
+    amount: number;
+    termMonths: number;
+    apr: number;
+    installment: number | null;
+  } | null;
   createdAt: string;
   step1: Record<string, any>;
   step2: {
