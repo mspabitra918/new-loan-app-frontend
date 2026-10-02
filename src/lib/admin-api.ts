@@ -285,6 +285,9 @@ export interface AccessLog {
   granted: boolean;
   ipAddress: string | null;
   accessedAt: string;
+  application?: {
+    application_id: string;
+  };
 }
 
 export interface ApplicationDetail {
