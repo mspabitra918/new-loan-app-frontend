@@ -391,24 +391,25 @@ export default function ApplicationDetailPage({
             title="Bank & funding (Step 3)"
             action={
               canControlDrip && app.step3?.completed ? (
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    disabled={dripBusy}
-                    onClick={() => drip("restart")}
-                    className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    Restart drip
-                  </button>
-                  <button
-                    type="button"
-                    disabled={dripBusy}
-                    onClick={() => drip("cancel")}
-                    className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    Cancel drip
-                  </button>
-                </div>
+                // <div className="flex gap-2">
+                //   <button
+                //     type="button"
+                //     disabled={dripBusy}
+                //     onClick={() => drip("restart")}
+                //     className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium hover:bg-slate-50 disabled:opacity-50"
+                //   >
+                //     Restart drip
+                //   </button>
+                //   <button
+                //     type="button"
+                //     disabled={dripBusy}
+                //     onClick={() => drip("cancel")}
+                //     className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium hover:bg-slate-50 disabled:opacity-50"
+                //   >
+                //     Cancel drip
+                //   </button>
+                // </div>
+                <div></div>
               ) : null
             }
           >
@@ -640,11 +641,11 @@ export default function ApplicationDetailPage({
         <div className="space-y-6">
           <Card title="Decision">
             <dl>
-              <Row label="Pre-qual" value={app.decision?.prequalDecision} />
-              <Row
+              {/* <Row label="Pre-qual" value={app.decision?.prequalDecision} /> */}
+              {/* <Row
                 label="Pre-qual at"
                 value={fmtDate(app.decision?.prequalDecisionAt)}
-              />
+              /> */}
               <Row
                 label="Underwriting"
                 value={app.decision?.underwritingDecision}
@@ -657,10 +658,10 @@ export default function ApplicationDetailPage({
                 label="Declined at"
                 value={fmtDate(app.decision?.declinedAt)}
               />
-              <Row
+              {/* <Row
                 label="Lockout until"
                 value={fmtDate(app.decision?.lockoutUntil)}
-              />
+              /> */}
             </dl>
             {Array.isArray(app.decision?.underwritingReasons) &&
               app.decision.underwritingReasons.length > 0 && (
@@ -676,7 +677,7 @@ export default function ApplicationDetailPage({
               )}
           </Card>
 
-          <Card title="Underwriting metrics">
+          {/* <Card title="Underwriting metrics">
             <dl>
               <Row
                 label="Total monthly income"
@@ -701,7 +702,7 @@ export default function ApplicationDetailPage({
                 value={app.derived?.residenceTenureMonths}
               />
             </dl>
-          </Card>
+          </Card> */}
 
           <Card title="Review flags">
             <FlagPills flags={(app as any).reviewFlags ?? []} />
@@ -731,9 +732,9 @@ export default function ApplicationDetailPage({
                   </span>
                 }
               />
-              <Row label="UTM source" value={app.system?.utmSource} />
-              <Row label="UTM medium" value={app.system?.utmMedium} />
-              <Row label="UTM campaign" value={app.system?.utmCampaign} />
+              {/* <Row label="UTM source" value={app.system?.utmSource} /> */}
+              {/* <Row label="UTM medium" value={app.system?.utmMedium} /> */}
+              {/* <Row label="UTM campaign" value={app.system?.utmCampaign} /> */}
               <Row label="Referrer" value={app.system?.referrerUrl} />
               <Row
                 label="Time on form"
@@ -743,7 +744,7 @@ export default function ApplicationDetailPage({
                     : null
                 }
               />
-              <Row
+              {/* <Row
                 label="Step 1 at"
                 value={fmtDate(app.system?.step1SubmittedAt)}
               />
@@ -758,7 +759,7 @@ export default function ApplicationDetailPage({
               <Row
                 label="Purge due"
                 value={fmtDate(app.retention?.purgeDueAt)}
-              />
+              /> */}
             </dl>
           </Card>
 
